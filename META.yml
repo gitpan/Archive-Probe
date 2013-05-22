@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Archive-Probe
-version:            0.8
+version:            0.81
 abstract:           A generic library to search file within archive
 author:
     - Justin Zhang <schnell18@gmail.com>
