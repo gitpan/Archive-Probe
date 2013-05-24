@@ -11,11 +11,12 @@ package Archive::Probe;
 use strict;
 use warnings;
 use Carp;
-use File::Path;
 use File::Copy;
+use File::Path;
 use File::Spec::Functions qw(catdir catfile devnull path);
+use File::Temp qw(tempfile);
 
-our $VERSION = "0.81";
+our $VERSION = "0.82";
 
 my %_CMD_LOC_FOR = ();
 
@@ -289,6 +290,7 @@ sub _callback {
             $pat_ref->[0]->($pat, $pat_ref->[1]);
         }
     }
+    $self->_cleanup();
 }
 
 sub _walk_tree {
@@ -472,17 +474,30 @@ sub _peek_archive {
         $sub
     ) = @_;
 
+    # stop peeking if archive tool is not available
+    my ($ar_cmd) = split(/\s+/, $list_cmd);
+    if (!$self->_is_cmd_avail($ar_cmd)) {
+        carp("$ar_cmd not in PATH, archive $file ignored\n");
+        return;
+    }
+    
     my $tmpdir = $self->working_dir();
-    my $cmd = join(" ", "$list_cmd", qq{"$file"});
-
-    my @col_indexes;
-    my $file_list_begin = 0;
-    my $ret = open(my $fh, "$cmd 2>&1 |");
-    if (!$ret) {
+    my $lst_file = $self->_get_list_file();
+    my $cmd = join(" ", $list_cmd, $self->_escape($file));
+    my $cmd_shell = "$cmd > $lst_file 2>&1";
+    my $ret = system($cmd_shell);
+    if ($ret != 0) {
         carp("Can't run $cmd due to: $!\n");
         return;
     }
+    $ret = open(my $fh, "<$lst_file");
+    if (!$ret) {
+        carp("Can't open file $lst_file due to: $!\n");
+        return;
+    }
 
+    my @col_indexes;
+    my $file_list_begin = 0;
     while(<$fh>) {
         chomp;
         my $line = $_;
@@ -619,17 +634,14 @@ sub _extract_archive_file {
 sub _build_cmd {
     my ($self, $extract_cmd, $dir, $parent, $file) = @_;
 
-    my $quote     = q["];
     my $chdir_cmd = q[cd];
     if ($^O eq 'MSWin32') {
         $chdir_cmd = q[cd /d];
     }
     return sprintf(
-        "%s %s%s%s && %s %s %s",
+        "%s %s && %s %s %s",
         $chdir_cmd,
-        $quote,
-        $dir,
-        $quote,
+        $self->_escape($dir),
         $extract_cmd,
         $self->_escape($parent),
         $self->_escape($file)
@@ -690,13 +702,11 @@ sub _escape {
     my ($self, $str) = @_;
 
     my $ret = $str;
-    if ($ret =~ /'|"|\\|\s+|&/) {
-        if ($ret =~ /"/) {
-            $ret = qq['$ret'];
-        }
-        else {
-            $ret = qq["$ret"];
-        }
+    if ($^O ne 'MSWin32') {
+        $ret =~ s/([ ;<>\\\*\|`&\$!#\(\)\[\]\{\}:'"])/\\$1/g;
+    }
+    else {
+        $ret = qq["$ret"] if $ret =~ /[ &#*\|\[\]\(\)\{\}\=;!+,`~']/;
     }
     return $ret;
 }
@@ -751,6 +761,28 @@ sub _dir_name {
     }
     else {
         return '';
+    }
+}
+
+sub _get_list_file {
+    my ($self) = @_;
+
+    my (undef, $lst) = tempfile();
+    my $files = $self->_property('archive_lst_files');
+    if (!defined($files)) {
+        $files = [];
+        $self->_property('archive_lst_files', $files);
+    }
+    push @$files, $lst;
+    return $lst;
+}
+
+sub _cleanup {
+    my ($self) = @_;
+
+    my $files = $self->_property('archive_lst_files');
+    foreach my $f (@$files) {
+        unlink($f);
     }
 }
 
