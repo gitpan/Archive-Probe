@@ -22,4 +22,5 @@ t/testdata/tc4/b.zip
 t/testdata/tc3/a.rar
 t/testdata/tc6/a.zip
 t/testdata/tc6/c.zip
-META.yml                                 Module meta-data (added by MakeMaker)
+META.yml                                 Module YAML meta-data (added by MakeMaker)
+META.json                                Module JSON meta-data (added by MakeMaker)

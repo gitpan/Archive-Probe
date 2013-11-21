@@ -1,22 +1,22 @@
---- #YAML:1.0
-name:               Archive-Probe
-version:            0.83
-abstract:           A generic library to search file within archive
+---
+abstract: 'A generic library to search file within archive'
 author:
-    - Justin Zhang <schnell18@gmail.com>
-license:            Artistic_2_0
-distribution_type:  module
-configure_requires:
-    ExtUtils::MakeMaker:  0
+  - 'Justin Zhang <schnell18@gmail.com>'
 build_requires:
-    Test::More:  0
-requires:
-    perl:  5.006
-no_index:
-    directory:
-        - t
-        - inc
-generated_by:       ExtUtils::MakeMaker version 6.57_05
+  Test::More: 0
+configure_requires:
+  ExtUtils::MakeMaker: 0
+dynamic_config: 1
+generated_by: 'ExtUtils::MakeMaker version 6.6302, CPAN::Meta::Converter version 2.120921'
+license: unknown
 meta-spec:
-    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
-    version:  1.4
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: Archive-Probe
+no_index:
+  directory:
+    - t
+    - inc
+requires:
+  perl: 5.006
+version: 0.84
