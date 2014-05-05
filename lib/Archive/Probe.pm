@@ -17,7 +17,7 @@ use File::Path;
 use File::Spec::Functions qw(catdir catfile devnull path);
 use File::Temp qw(tempfile);
 
-our $VERSION = "0.85";
+our $VERSION = "0.86";
 
 my %_CMD_LOC_FOR = ();
 
@@ -32,7 +32,7 @@ Archive::Probe - A generic library to search file within archive
     use Archive::Probe;
 
     my $tmpdir = '<temp_dir>';
-    my $base_dir = '<directory_of_archive_files>';
+    my $base = '<directory_or_archive_file>';
     my $probe = Archive::Probe->new();
     $probe->working_dir($tmpdir);
     $probe->add_pattern(
@@ -42,26 +42,34 @@ Archive::Probe - A generic library to search file within archive
 
             # do something with result files
     });
-    $probe->search($base_dir, 1);
+    $probe->search($base, 1);
+
+    # or use it as generic archive extractor
+    use Archive::Probe;
+
+    my $archive = '<path_to_your_achive>';
+    my $dest_dir = '<path_to_dest>';
+    $probe->extract($archive, $dest_dir, 1);
 
 =head1 DESCRIPTION
 
-Archive::Probe is a generic library to search file within archive.
+Archive::Probe is a generic utility to search or extract archives.
 
 It facilitates searching of particular file by name or content inside
-deeply nested archive with mixed types. It supports common archive
-types such as .tar, .tgz, .bz2, .rar, .zip .7z and Java archive such
-as .jar, .war, .ear. If the target archive file contains another
-archive file of same or other type, this module extracts the embedded
-archive to fulfill the inquiry. The level of embedding is unlimited.
-This module depends on unzip, unrar, 7za and tar which are assumed to
-be present in PATH. The 7za is part of 7zip utility. It is preferred
-tool to deal with .zip archive it runs faster and handles meta
+deeply nested archive with mixed types. It can also extract embedded
+archive inside the master archive recursively. It is built on top of
+common archive tools such as 7zip, unrar, unzip and tar. It supports
+common archive types such as .tar, .tgz, .bz2, .rar, .zip .7z and Java
+archive such as .jar, .war, .ear. If the target archive file contains
+another archive file of same or other type, this module extracts the
+embedded archive to fulfill the inquiry. The level of embedding is
+unlimited. This module depends on unzip, unrar, 7za and tar which are
+assumed to be present in PATH. The 7za is part of 7zip utility. It is
+preferred tool to deal with .zip archive it runs faster and handles meta
 character better than unzip. The 7zip is open source software and you
-download and install it from www.7-zip.org or install the binary
-package p7zip with your favorite package management software. The
-unrar is freeware which can be downloaded from
-http://www.rarlab.com/rar_add.htm.
+download and install it from www.7-zip.org or install the binary package
+p7zip with your favorite package management software. The unrar is
+freeware which can be downloaded from http://www.rarlab.com/rar_add.htm.
 
 =cut
 
@@ -80,7 +88,7 @@ sub new {
     return bless {}, $class;
 }
 
-=head2 add_pattern(regex, coderef)
+=head2 add_pattern($pattern, $callback)
 
 Register a file pattern to search with in the archive file(s) and the
 callback code to handle the matched files. The callback will be passed
@@ -90,13 +98,14 @@ two arguments:
 
 =item $pattern
 
-This is the pattern of the matched files.
+This is the pattern of files to be searched.
 
-=item $file_ref
+=item $callback
 
-This is the array reference to the files matched the pattern. The files
-are extracted, hence exist, only if the second argument of the
-C<search()> method evaluates to true.
+This is the callback to examine the search result. The array reference
+to the files matched the pattern is passed to the callback. If you want
+to examine the content of the matched files, then you set the second
+argument of the C<search()> method to true.
 
 =back
 
@@ -118,9 +127,9 @@ sub add_pattern {
     $pattern_map->{$pattern} = [$callback];
 }
 
-=head2 search(base_dir, extract_matched)
+=head2 search($base, $extract_matched)
 
-Search registered files under 'base_dir' and invoke the callback.
+Search files of interest under 'base' and invoke the callback.
 It requires two arguments:
 
 =over 4
@@ -143,25 +152,45 @@ files based on their content not just by name.
 sub search {
     my ($self, $base, $do_extract) = @_;
     
-    my $dirs_ref = [$base];
-    $self->_walk_tree($dirs_ref, sub {
-        my ($file) = @_;
+    my @queue = ();
+    push @queue, $base;
 
-        my $ctx = '';
-        # Test if the file matches regestered pattern
-        $self->_match($do_extract, $base, $ctx, $file);
-        if ($self->_is_archive_file($file)) {
-            my $ctx = $self->_strip_dir($base, $file) ;
-            $ctx .= '__' if $ctx ne '';
-            $self->_search_in_archive($do_extract, $base, $ctx, $file);
+    while (my $path = shift @queue) {
+        if (-d $path) {
+            opendir(my $dh, $path) or do {
+                carp("Can't read directory due to: $!\n");
+                next;
+            };
+
+            while (my $entry = readdir($dh)) {
+                next if $entry eq '.' || $entry eq '..';
+                push @queue, catfile($path, $entry);
+            }
+            closedir($dh);
         }
-    });
+        elsif (-f $path) {
+            my $new_base = $base;
+            $new_base = dirname($base) if $base eq $path;
+            # Test if the file matches regestered pattern
+            $self->_match($do_extract, $new_base, '', $path);
+            if ($self->_is_archive_file($path)) {
+                my $ctx = $self->_strip_dir($new_base, $path) ;
+                $ctx .= '__' if $ctx ne '';
+                $self->_search_in_archive(
+                    $do_extract,
+                    $new_base,
+                    $ctx,
+                    $path
+                );
+            }
+        }
+    }
 
     # check search result & invoke callback
     $self->_callback();
 }
 
-=head2 extract(base, to_dir, recursive)
+=head2 extract($base, $to_dir, $recursive, $flat)
 
 Extract archive to given destination directory.
 It requires three arguments:
@@ -188,6 +217,11 @@ archives under the same folder as their containing folder in recursive
 mode. Otherwise, it extracts the content of embedded archives into their
 own directories to avoid files with same name from different embedded
 archive being overwritten. Default is false.
+
+=item return value
+
+The return value of this method evaluates to true if the archive is
+extacted successfully. Otherwise, it evaluates to false.
 
 =back
 
@@ -242,8 +276,12 @@ sub extract {
             if ($ret && $recursive) {
                 push @queue, $dest_dir;
             }
+            elsif (!$ret) {
+                return 0;
+            }
         }
     }
+    return 1;
 }
 
 =head2 reset_matches()
@@ -263,7 +301,7 @@ sub reset_matches {
 
 =head1 ACCESSORS
 
-=head2 working_dir([directory])
+=head2 working_dir([$directory])
 
 Set or get the working directory where the temporary files will be created.
 
@@ -383,41 +421,6 @@ sub _callback {
         }
     }
     $self->_cleanup();
-}
-
-sub _walk_tree {
-    my ($self, $bases_ref, $file_handler) = @_;
-
-    my @dirs = ();
-
-    foreach my $base (@$bases_ref) {
-        if (-d $base) {
-            my $ret = opendir(DIR, $base);
-            if (!$ret) {
-                carp("Can't read directory due to: $!\n");
-                next;
-            }
-
-            while(my $entry = readdir(DIR)) {
-                next if $entry eq '.' || $entry eq '..';
-                my $full_path = catfile($base, $entry);
-                if(-f $full_path) {
-                    $file_handler->($full_path);
-                }
-                elsif(-d $full_path) {
-                    push @dirs, $full_path;
-                }
-            }
-            closedir(DIR);
-        }
-        elsif (-f $base) {
-            $file_handler->($base);
-        }
-    }
-
-    if(@dirs) {
-        $self->_walk_tree(\@dirs, $file_handler);
-    }
 }
 
 sub _search_in_archive {
@@ -582,7 +585,7 @@ sub _peek_archive {
     my $cmd_shell = "$cmd > $lst_file 2>&1";
     my $ret = system($cmd_shell);
     if ($ret != 0) {
-        carp("Can't run $cmd due to: $!\n");
+        carp("Can't run $cmd\n");
         return;
     }
     $ret = open(my $fh, q{<}, "$lst_file");
@@ -922,7 +925,7 @@ This code is hosted on Github
 
 =head1 BUG REPORTS
 
-Please report bugs or other issues to E<lt>schnell18@rt.cpan.orgE<gt>.
+Please report bugs or other issues to E<lt>fgz@rt.cpan.orgE<gt>.
 
 =head1 AUTHOR
 
